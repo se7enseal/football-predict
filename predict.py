@@ -2,65 +2,56 @@ import streamlit as st
 import pandas as pd
 import os
 
-# --- 1. 数据加载与处理 ---
+# --- 1. 数据处理区 ---
 @st.cache_data
 def load_data():
     current_dir = os.path.dirname(__file__)
     file_path = os.path.join(current_dir, 'EPL_2026.csv')
     return pd.read_csv(file_path) if os.path.exists(file_path) else None
 
-def get_team_points(df):
-    teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
-    points = {team: 0 for team in teams}
-    for _, row in df.iterrows():
-        if row['FTR'] == 'H': points[row['HomeTeam']] += 3
-        elif row['FTR'] == 'A': points[row['AwayTeam']] += 3
-        else:
-            points[row['HomeTeam']] += 1
-            points[row['AwayTeam']] += 1
-    return points
+def get_stats(df, team):
+    # 过滤主客场比赛
+    home_games = df[df['HomeTeam'] == team]
+    away_games = df[df['AwayTeam'] == team]
+    
+    # 平均进球与失球
+    h_scored = home_games['FTHG'].mean()
+    h_conceded = home_games['FTAG'].mean()
+    a_scored = away_games['FTG'].mean() # 假设CSV包含客场进球列
+    a_conceded = away_games['FTHG'].mean()
+    
+    return h_scored, h_conceded, a_scored, a_conceded
 
-# --- 2. 新增：计算近期 5 场状态 ---
-def get_recent_form(df, team, last_n=5):
-    # 筛选该球队参与的最近 N 场比赛
-    team_games = df[(df['HomeTeam'] == team) | (df['AwayTeam'] == team)].tail(last_n)
-    form_score = 0
-    for _, row in team_games.iterrows():
-        if (row['HomeTeam'] == team and row['FTR'] == 'H') or (row['AwayTeam'] == team and row['FTR'] == 'A'):
-            form_score += 3
-        elif row['FTR'] == 'D':
-            form_score += 1
-    return form_score
-
-# --- 3. 页面交互 ---
-st.title("⚽ 足球胜负预测：积分+状态模型")
+# --- 2. 网页 UI ---
+st.title("⚽ 足球专家级深度分析系统")
 data = load_data()
 
 if data is not None:
-    team_scores = get_team_points(data)
-    team_names = {name.lower(): name for name in team_scores.keys()}
+    teams = sorted(list(set(data['HomeTeam']) | set(data['AwayTeam'])))
     
-    home_input = st.sidebar.text_input("主队名称").strip().lower()
-    away_input = st.sidebar.text_input("客队名称").strip().lower()
+    col1, col2 = st.columns(2)
+    h_name = col1.selectbox("选择主队", teams)
+    a_name = col2.selectbox("选择客队", teams)
 
-    if st.sidebar.button("开始预测"):
-        if home_input in team_names and away_input in team_names:
-            h_name, a_name = team_names[home_input], team_names[away_input]
-            
-            # 计算总分 (赛季积分 + 近5场表现)
-            h_power = team_scores[h_name] + get_recent_form(data, h_name)
-            a_power = team_scores[a_name] + get_recent_form(data, a_name)
-            
-            diff = h_power - a_power
-            
-            # 输出离散结论
-            if diff > 5: res = f"预测主胜：{h_name} 状态与积分为优"
-            elif diff < -5: res = f"预测客胜：{a_name} 状态与积分为优"
-            else: res = "势均力敌：平局可能性大"
-            
-            st.success(f"### {res}")
-            st.write(f"数据参考：主队综合分 {h_power} | 客队综合分 {a_power}")
-        else:
-            st.error("请输入正确的球队名称！")
+    if st.button("开始深度预测"):
+        h_s, h_c, _, _ = get_stats(data, h_name)
+        _, _, a_s, a_c = get_stats(data, a_name)
+        
+        # 简单比分模型 (预测进球 = 主攻能力 * 客防能力)
+        pred_h = round((h_s + a_c) / 2)
+        pred_a = round((a_s + h_c) / 2)
+        
+        st.subheader(f"📊 预测比分: {pred_h} : {pred_a}")
+        
+        # 进球数与 BTTS
+        total_goals = pred_h + pred_a
+        btts = "是" if (pred_h > 0 and pred_a > 0) else "否"
+        
+        st.write(f"**预计总进球数:** {total_goals} 球")
+        st.write(f"**双方是否进球 (BTTS):** {btts}")
+        
+        # 爆冷提示
+        if abs(pred_h - pred_a) <= 1:
+            st.warning("⚠️ 提示：比分差距小，模型预测为焦灼对局，谨防平局。")
 else:
-    st.error("找不到数据文件！")
+    st.error("数据文件加载失败，请检查路径。")
