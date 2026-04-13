@@ -1,62 +1,86 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import os
 
-# --- 1. 数据处理 ---
+# --- 1. 数据加载 ---
 @st.cache_data
 def load_data():
-    try:
-        return pd.read_csv('EPL_2026.csv')
-    except:
-        return None
+    current_dir = os.path.dirname(__file__)
+    file_path = os.path.join(current_dir, 'EPL_2026.csv')
+    return pd.read_csv(file_path) if os.path.exists(file_path) else None
 
-# --- 2. 网页 UI ---
-st.set_page_config(page_title="足球分析专家", layout="wide")
-st.title("⚽ 足球专家级综合分析系统")
+# --- 2. 统计逻辑 ---
+def get_detailed_stats(df, team):
+    home_games = df[df['HomeTeam'] == team]
+    away_games = df[df['AwayTeam'] == team]
+    
+    # 场均进球与失球
+    h_s = home_games['FTHG'].mean() if not home_games.empty else 0
+    h_c = home_games['FTAG'].mean() if not home_games.empty else 0
+    a_s = away_games['FTAG'].mean() if not away_games.empty else 0
+    a_c = away_games['FTHG'].mean() if not away_games.empty else 0
+    
+    return h_s, h_c, a_s, a_c
+
+# --- 3. 页面布局 ---
+st.set_page_config(page_title="足球大数据分析终端", layout="wide")
+st.title("⚽ 专家级全维度赛果预测系统")
 
 data = load_data()
 
 if data is not None:
     teams = sorted(list(set(data['HomeTeam']) | set(data['AwayTeam'])))
     
-    # 左右布局
-    col_l, col_r = st.columns(2)
-    h_name = col_l.selectbox("选择主队", teams)
-    a_name = col_r.selectbox("选择客队", teams)
+    # 侧边栏：基本面手动调节
+    st.sidebar.header("📊 基本面实时修正")
+    h_name = st.sidebar.selectbox("选择主队", teams, index=0)
+    h_form = st.sidebar.slider(f"{h_name} 近期状态得分", 1, 10, 5)
     
-    # 基本面输入
-    st.sidebar.header("基本面修正")
-    h_form = st.sidebar.slider(f"{h_name} 状态 (1-10)", 1, 10, 7)
-    a_form = st.sidebar.slider(f"{a_name} 状态 (1-10)", 1, 10, 7)
+    st.sidebar.markdown("---")
+    a_name = st.sidebar.selectbox("选择客队", teams, index=1)
+    a_form = st.sidebar.slider(f"{a_name} 近期状态得分", 1, 10, 5)
     
-    if st.button("生成详细分析报告"):
-        # 计算核心数据
-        home_df = data[data['HomeTeam'] == h_name]
-        away_df = data[data['AwayTeam'] == a_name]
+    if st.sidebar.button("生成深度分析报告"):
+        # 获取基础数据
+        h_s, h_c, _, _ = get_detailed_stats(data, h_name)
+        _, _, a_s, a_c = get_detailed_stats(data, a_name)
         
-        h_goal_avg = home_df['FTHG'].mean()
-        a_goal_avg = away_df['FTAG'].mean()
+        # 4. 预测算法（核心优化：加入状态权重修正进球期望值）
+        # 逻辑：基础进球期望 * (状态分/5)
+        exp_h = ((h_s + a_c) / 2) * (h_form / 5)
+        exp_a = ((a_s + h_c) / 2) * (a_form / 5)
         
-        # 可视化：攻防趋势图
-        st.subheader("📊 攻防效率趋势")
+        pred_h = int(round(exp_h))
+        pred_a = int(round(exp_a))
+        
+        # 5. 结果展示
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("核心预测比分", f"{pred_h} : {pred_a}")
+        with col2:
+            st.metric("预计总进球", f"{pred_h + pred_a} 球")
+        with col3:
+            btts = "是 (Yes)" if (exp_h > 0.8 and exp_a > 0.8) else "否 (No)"
+            st.metric("双方是否得分", btts)
+            
+        # 6. 可视化图表
+        st.subheader("📈 攻防战力对比图")
         chart_data = pd.DataFrame({
-            '进攻效率': [h_goal_avg, a_goal_avg],
-            '近期状态': [h_form/10, a_form/10]
-        }, index=[h_name, a_name])
+            "战力指数": [h_s, h_c, a_s, a_c],
+            "分类": ["主队场均进球", "主队场均失球", "客队场均进球", "客队场均失球"]
+        }).set_index("分类")
         st.bar_chart(chart_data)
         
-        # 详细文字报告
-        st.subheader("📝 专家洞察")
-        st.write(f"根据赛季数据，**{h_name}** 在主场平均能打入 {h_goal_avg:.2f} 球。")
-        st.write(f"结合状态评分，模型显示本场比赛的进球期望值为 {h_goal_avg + a_goal_avg:.2f}。")
-        
-        # 最终预测
-        if h_form > a_form + 2:
-            st.success(f"结论：{h_name} 状态更佳，主场具备拿分优势。")
-        elif a_form > h_form + 2:
-            st.warning(f"结论：{a_name} 客场反击效率高，建议关注冷门。")
+        # 7. 爆冷预警逻辑
+        st.subheader("💡 专家建议")
+        diff = (h_form + h_s*2) - (a_form + a_s*2)
+        if abs(diff) < 2:
+            st.warning("⚠️ 双方纸面实力与近况极度接近，建议首选平局。")
+        elif h_form < 4 and h_s > a_s:
+            st.error(f"❗ 警报：{h_name} 虽然赛季数据好，但近期状态滑坡，防爆冷。")
         else:
-            st.info("结论：双方势均力敌，平局概率较高。")
-            
+            winner = h_name if exp_h > exp_a else a_name
+            st.success(f"✅ 模型更倾向于看好 {winner} 保持不败或取胜。")
 else:
-    st.error("数据加载失败，请检查 CSV 文件名是否为 'EPL_2026.csv'。")
+    st.error("无法加载 EPL_2026.csv，请检查文件是否在 GitHub 根目录。")
