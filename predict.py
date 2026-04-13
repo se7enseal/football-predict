@@ -2,47 +2,64 @@ import streamlit as st
 import pandas as pd
 import os
 
+# --- 1. 数据加载 ---
 @st.cache_data
 def load_data():
-    # 获取当前代码文件所在的目录
+    # 自动获取当前代码所在路径，确保即使在云端也能找到同目录下的文件
     current_dir = os.path.dirname(__file__)
-    # 拼接出 E0.csv 的绝对路径
-    file_path = os.path.join(current_dir, 'E0.csv')
+    file_path = os.path.join(current_dir, 'EPL_2026.csv')
     
-    # 增加一个检查，如果文件确实没找到，报错会更明确
-    if not os.path.exists(file_path):
-        st.error(f"找不到文件，请确认 E0.csv 是否在代码同级目录下。当前寻找路径: {file_path}")
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path)
+    else:
         return None
-        
-    return pd.read_csv(file_path)
 
-team_scores = get_team_points(data)
+# --- 2. 积分计算逻辑 ---
+def get_team_points(df):
+    if df is None: return {}
+    # 提取所有出现的球队名称
+    teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
+    points = {team: 0 for team in teams}
+    
+    for _, row in df.iterrows():
+        # 这里对应 Football-Data 格式：FTR 为 'H'主胜, 'A'客胜, 'D'平局
+        if row['FTR'] == 'H':
+            points[row['HomeTeam']] += 3
+        elif row['FTR'] == 'A':
+            points[row['AwayTeam']] += 3
+        else:
+            points[row['HomeTeam']] += 1
+            points[row['AwayTeam']] += 1
+    return points
 
-# 2. --- 预测逻辑函数 ---
-def predict(home_team, away_team, scores):
-    h_p = scores.get(home_team, 0)
-    a_p = scores.get(away_team, 0)
-    diff = h_p - a_p
-    if diff > 10: return "主胜 (实力碾压)"
-    elif diff < -10: return "客胜 (客队强势)"
-    else: return "平局或小球 (双方势均力敌)"
-
-# 3. --- 网页 UI 交互区 (网页的核心展示) ---
+# --- 3. 页面核心 ---
 st.title("⚽ 足球赛果智能预测系统")
 
-# 侧边栏输入
-home_team = st.sidebar.text_input("输入主队名称 (如: Arsenal)")
-away_team = st.sidebar.text_input("输入客队名称 (如: Everton)")
+# 加载数据并检测错误
+data = load_data()
 
-# 点击按钮触发
-if st.sidebar.button("开始预测"):
-    if home_team in team_scores and away_team in team_scores:
-        result = predict(home_team, away_team, team_scores)
-        st.success(f"### 预测结果：{result}")
-    else:
-        st.error("球队名称未找到，请检查拼写是否与 CSV 数据一致！")
+if data is not None:
+    team_scores = get_team_points(data)
+    
+    # 用户输入交互
+    st.sidebar.header("输入预测对阵")
+    home_team = st.sidebar.text_input("主队名称 (如: Arsenal)")
+    away_team = st.sidebar.text_input("客队名称 (如: Everton)")
 
-# 4. --- 额外展示区 (让页面更丰富) ---
-st.write("---")
-st.write("当前积分榜预览：")
-st.dataframe(pd.DataFrame.from_dict(team_scores, orient='index', columns=['积分']))
+    if st.sidebar.button("开始预测"):
+        if home_team in team_scores and away_team in team_scores:
+            diff = team_scores[home_team] - team_scores[away_team]
+            
+            # 显示离散结果
+            if diff > 10: res = "主队实力碾压 - 预测主胜"
+            elif diff < -10: res = "客队实力强劲 - 预测客胜"
+            else: res = "双方势均力敌 - 预测平局或小比分"
+            
+            st.success(f"### 预测结论：{res}")
+            st.info(f"主队积分: {team_scores[home_team]} | 客队积分: {team_scores[away_team]}")
+        else:
+            st.warning("⚠️ 未找到该球队，请检查输入是否与数据表中的英文名称完全一致！")
+            st.write("数据表中的球队示例:", list(team_scores.keys())[:5])
+else:
+    st.error("❌ 严重错误：在云端目录下找不到 'EPL_2026.csv'。")
+    st.write("请确保：文件已上传到 GitHub 仓库根目录，且拼写为 'EPL_2026.csv'。")
