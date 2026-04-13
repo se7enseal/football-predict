@@ -1,55 +1,62 @@
 import streamlit as st
 import pandas as pd
-import os
+import numpy as np
 
-# --- 1. 数据加载 ---
+# --- 1. 数据处理 ---
 @st.cache_data
 def load_data():
-    current_dir = os.path.dirname(__file__)
-    file_path = os.path.join(current_dir, 'EPL_2026.csv')
-    return pd.read_csv(file_path) if os.path.exists(file_path) else None
+    try:
+        return pd.read_csv('EPL_2026.csv')
+    except:
+        return None
 
-# --- 2. 核心统计逻辑 ---
-def get_stats(df, team):
-    # 过滤比赛
-    home_games = df[df['HomeTeam'] == team]
-    away_games = df[df['AwayTeam'] == team]
-    
-    # 计算平均进球 (FTHG 为主进球, FTAG 为客进球)
-    h_scored_avg = home_games['FTHG'].mean()
-    h_conceded_avg = home_games['FTAG'].mean()
-    a_scored_avg = away_games['FTAG'].mean()
-    a_conceded_avg = away_games['FTHG'].mean()
-    
-    return h_scored_avg, h_conceded_avg, a_scored_avg, a_conceded_avg
+# --- 2. 网页 UI ---
+st.set_page_config(page_title="足球分析专家", layout="wide")
+st.title("⚽ 足球专家级综合分析系统")
 
-# --- 3. 网页交互区 ---
-st.title("⚽ 足球深度分析系统")
 data = load_data()
 
 if data is not None:
-    # 获取所有球队名
     teams = sorted(list(set(data['HomeTeam']) | set(data['AwayTeam'])))
     
-    h_name = st.sidebar.selectbox("选择主队", teams)
-    a_name = st.sidebar.selectbox("选择客队", teams)
-
-    if st.sidebar.button("开始深度预测"):
-        # 获取两队数据
-        h_s, h_c, _, _ = get_stats(data, h_name)
-        _, _, a_s, a_c = get_stats(data, a_name)
+    # 左右布局
+    col_l, col_r = st.columns(2)
+    h_name = col_l.selectbox("选择主队", teams)
+    a_name = col_r.selectbox("选择客队", teams)
+    
+    # 基本面输入
+    st.sidebar.header("基本面修正")
+    h_form = st.sidebar.slider(f"{h_name} 状态 (1-10)", 1, 10, 7)
+    a_form = st.sidebar.slider(f"{a_name} 状态 (1-10)", 1, 10, 7)
+    
+    if st.button("生成详细分析报告"):
+        # 计算核心数据
+        home_df = data[data['HomeTeam'] == h_name]
+        away_df = data[data['AwayTeam'] == a_name]
         
-        # 简单比分模型: (主队进球期望 + 客队失球期望) / 2
-        pred_h = round((h_s + a_c) / 2)
-        pred_a = round((a_s + h_c) / 2)
+        h_goal_avg = home_df['FTHG'].mean()
+        a_goal_avg = away_df['FTAG'].mean()
         
-        st.subheader(f"📊 预测比分: {pred_h} : {pred_a}")
+        # 可视化：攻防趋势图
+        st.subheader("📊 攻防效率趋势")
+        chart_data = pd.DataFrame({
+            '进攻效率': [h_goal_avg, a_goal_avg],
+            '近期状态': [h_form/10, a_form/10]
+        }, index=[h_name, a_name])
+        st.bar_chart(chart_data)
         
-        # 进球数与 BTTS (Both Teams To Score)
-        total_goals = pred_h + pred_a
-        btts = "是" if (pred_h > 0 and pred_a > 0) else "否"
+        # 详细文字报告
+        st.subheader("📝 专家洞察")
+        st.write(f"根据赛季数据，**{h_name}** 在主场平均能打入 {h_goal_avg:.2f} 球。")
+        st.write(f"结合状态评分，模型显示本场比赛的进球期望值为 {h_goal_avg + a_goal_avg:.2f}。")
         
-        st.write(f"**预计总进球数:** {total_goals} 球")
-        st.write(f"**双方是否进球 (BTTS):** {btts}")
+        # 最终预测
+        if h_form > a_form + 2:
+            st.success(f"结论：{h_name} 状态更佳，主场具备拿分优势。")
+        elif a_form > h_form + 2:
+            st.warning(f"结论：{a_name} 客场反击效率高，建议关注冷门。")
+        else:
+            st.info("结论：双方势均力敌，平局概率较高。")
+            
 else:
-    st.error("找不到文件，请确认 GitHub 仓库中文件名是否为 EPL_2026.csv")
+    st.error("数据加载失败，请检查 CSV 文件名是否为 'EPL_2026.csv'。")
