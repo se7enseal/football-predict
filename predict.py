@@ -1,25 +1,20 @@
 import streamlit as st
 import pandas as pd
+import os
 
-# 1. --- 数据加载区 (只运行一次) ---
-@st.cache_data  # 这个装饰器能让网页加载更快
+@st.cache_data
 def load_data():
-    df = pd.read_csv('E0.csv')
-    return df
-
-data = load_data()
-
-# --- 你的原始积分逻辑 ---
-def get_team_points(df):
-    teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
-    points = {team: 0 for team in teams}
-    for _, row in df.iterrows():
-        if row['FTR'] == 'H': points[row['HomeTeam']] += 3
-        elif row['FTR'] == 'A': points[row['AwayTeam']] += 3
-        else:
-            points[row['HomeTeam']] += 1
-            points[row['AwayTeam']] += 1
-    return points
+    # 获取当前代码文件所在的目录
+    current_dir = os.path.dirname(__file__)
+    # 拼接出 E0.csv 的绝对路径
+    file_path = os.path.join(current_dir, 'E0.csv')
+    
+    # 增加一个检查，如果文件确实没找到，报错会更明确
+    if not os.path.exists(file_path):
+        st.error(f"找不到文件，请确认 E0.csv 是否在代码同级目录下。当前寻找路径: {file_path}")
+        return None
+        
+    return pd.read_csv(file_path)
 
 team_scores = get_team_points(data)
 
