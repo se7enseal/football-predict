@@ -17,33 +17,38 @@ def get_team_color(team_name, is_second=False, other_color=None):
     return color
 
 # --- 2. 核心分析逻辑 ---
-@st.cache_data
+@st.cache_data(ttl=600)
 def load_data():
     file_path = os.path.join(os.path.dirname(__file__), 'EPL_2026.csv')
-    return pd.read_csv(file_path) if os.path.exists(file_path) else None
+    if not os.path.exists(file_path): return None
+    df = pd.read_csv(file_path)
+    # 【核心修复】统一将日期转换为 datetime 对象，并确保全局倒序
+    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True)
+    return df.sort_values(by='Date', ascending=False)
 
 def get_recent_stats(df, team):
-    games = df[(df['HomeTeam'] == team) | (df['AwayTeam'] == team)].tail(5)
+    # 动态切片：找到该队在整个CSV中出现过的所有比赛，并取时间上最新的5场
+    team_games = df[(df['HomeTeam'] == team) | (df['AwayTeam'] == team)].head(5)
     w, d, l = 0, 0, 0
     data_list = []
-    for _, row in games.iterrows():
+    for _, row in team_games.iterrows():
         is_home = row['HomeTeam'] == team
         if row['FTR'] == 'D': res, d = "平", d + 1
         elif (is_home and row['FTR'] == 'H') or (not is_home and row['FTR'] == 'A'): res, w = "胜", w + 1
         else: res, l = "负", l + 1
-        data_list.append({"日期": row['Date'], "对手": row['AwayTeam'] if is_home else row['HomeTeam'], "比分": f"{row['FTHG']}:{row['FTAG']}", "结果": res})
+        data_list.append({"日期": row['Date'].strftime('%m-%d'), "对手": row['AwayTeam'] if is_home else row['HomeTeam'], "比分": f"{row['FTHG']}:{row['FTAG']}", "结果": res})
     return pd.DataFrame(data_list), f"{w}胜 {d}平 {l}负"
 
 def calculate_radar_metrics(df, team, opponent):
-    games = df[(df['HomeTeam'] == team) | (df['AwayTeam'] == team)].tail(5)
-    # 基础性能
+    # 同样使用动态切片
+    games = df[(df['HomeTeam'] == team) | (df['AwayTeam'] == team)].head(5)
     attack = min(games.apply(lambda x: x['FTHG'] if x['HomeTeam']==team else x['FTAG'], axis=1).mean() * 3.3, 10)
     defence = max(10 - (games.apply(lambda x: x['FTAG'] if x['HomeTeam']==team else x['FTHG'], axis=1).mean() * 3.3), 0)
     points_earned = sum([3 if (row['FTR']=='H' if row['HomeTeam']==team else row['FTR']=='A') else 1 if row['FTR']=='D' else 0 for _, row in games.iterrows()])
     state = (points_earned / 15) * 10
     tactics = 10 - abs(attack - defence)
     
-    # 离散值：利用比赛场次/积分近似代表排名强度差
+    # 离散值：动态计算当前数据集中的总场次作为排名参考
     team_p = df.groupby('HomeTeam')['FTHG'].count().get(team, 10)
     opp_p = df.groupby('HomeTeam')['FTHG'].count().get(opponent, 10)
     discrete_val = max(10 - abs(team_p - opp_p), 1)
@@ -52,7 +57,7 @@ def calculate_radar_metrics(df, team, opponent):
 
 # --- 3. 页面主程序 ---
 st.set_page_config(page_title="足球预测系统", layout="wide")
-st.title("⚽ 专家级全维度赛果预测终端")
+st.title("⚽ 智能回溯赛果预测终端")
 
 data = load_data()
 if data is not None:
@@ -61,7 +66,6 @@ if data is not None:
     h_name = col1.selectbox("选择主队", teams)
     a_name = col2.selectbox("选择客队", teams)
 
-    # 1. 战绩与伤病
     c1, c2 = st.columns(2)
     with c1:
         h_df, h_stats = get_recent_stats(data, h_name)
@@ -76,7 +80,6 @@ if data is not None:
         st.table(a_df)
         a_injury = st.text_input("伤病情报:", "无", key="a_inj")
 
-    # 2. 雷达图 (集成离散值)
     h_m, a_m = calculate_radar_metrics(data, h_name, a_name), calculate_radar_metrics(data, a_name, h_name)
     h_col = get_team_color(h_name)
     a_col = get_team_color(a_name, True, h_col)
@@ -88,7 +91,6 @@ if data is not None:
     st.subheader("📊 战力多维雷达分析")
     st.plotly_chart(fig, use_container_width=True)
 
-    # 3. 预测与权重
     st.sidebar.header("🎯 模型权重微调")
     h_form = st.sidebar.slider(f"{h_name} 权重", 1, 10, int(np.mean(list(h_m.values()))))
     a_form = st.sidebar.slider(f"{a_name} 权重", 1, 10, int(np.mean(list(a_m.values()))))
@@ -98,6 +100,5 @@ if data is not None:
         pred_a = int(round(data[data['AwayTeam']==a_name]['FTAG'].mean() * (a_form/5)))
         st.header(f"🎯 最终预测比分: {pred_h} : {pred_a}")
         st.info(f"伤病警报: {h_name}({h_injury}) | {a_name}({a_injury})")
-
 else:
     st.error("数据加载失败。")
